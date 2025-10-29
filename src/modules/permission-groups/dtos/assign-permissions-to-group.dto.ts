@@ -1,13 +1,21 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { ArrayNotEmpty, IsArray, IsString } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ArrayNotEmpty, IsArray, IsInt, IsOptional, IsString } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class AssignPermissionsToGroupDto {
-  @ApiProperty({
-    example: ['user:create', 'user:read'],
-    description: 'List of permission slugs to set on this group (replaces existing)',
-  })
+  @ApiPropertyOptional({ type: [Number], example: [1, 2, 3] })
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  @Transform(({ value }) =>
+    Array.isArray(value) ? value.map((v) => parseInt(v, 10)) : undefined,
+  )
+  permissionIds?: number[];
+
+  @ApiPropertyOptional({ type: [String], example: ['users.read', 'users.write'] })
+  @IsOptional()
   @IsArray()
   @ArrayNotEmpty()
   @IsString({ each: true })
-  permissionSlugs: string[];
+  permissionSlugs?: string[];
 }

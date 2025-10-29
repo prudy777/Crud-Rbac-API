@@ -14,15 +14,18 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+
+import { UsersService } from './users.service';
+
 import { CreateUserDto } from './dtos/create-user.dto';
 import { UpdateUsertDto } from './dtos/update-user.dto';
 import { LoginUserDto } from './dtos/login-user.dto';
-import { UsersService } from './users.service';
-import { Public } from '../../common/decorator/public.decorator';
-import { IsMineGuard } from '../../common/guards/is-mine.guard';
 import { QueryUserDto } from './dtos/query-user.dto';
 import { SetUserRolesDto } from './dtos/set-user-roles.dto';
+
+import { Public } from '../../common/decorator/public.decorator';
 import { RequirePermissions } from '../../common/decorator/require-permissions.decorator';
+import { IsMineGuard } from '../../common/guards/is-mine.guard';
 
 import { UserSafeDto } from './dtos/user-safe.dto';
 import { LoginResponseDto } from './dtos/login-response.dto';
@@ -102,7 +105,7 @@ export class UsersController {
   @ApiResponse({
     status: 200,
     description: 'OK',
-    schema: { example: { sub: 1, name: 'John Doe', email: 'email@example.com' } },
+    schema: { example: { sub: 1, name: 'John Doe', email: 'email@example.com', roles: ['admin'], perms: ['user:read'] } },
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   me(@Request() req: AuthRequest): UserPayload {

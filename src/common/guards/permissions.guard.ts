@@ -1,33 +1,28 @@
-// src/common/guards/permissions.guard.ts
-import { CanActivate, ExecutionContext, Injectable, ForbiddenException } from '@nestjs/common';
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { PrismaService } from '../../core/services/prisma.service';
-import { PERMS_KEY } from '../decorator/require-permissions.decorator';
+import { REQUIRE_PERMS_KEY } from '../decorator/require-permissions.decorator';
 
 @Injectable()
 export class PermissionsGuard implements CanActivate {
-  constructor(private reflector: Reflector, private prisma: PrismaService) {}
+  constructor(private readonly reflector: Reflector) {}
 
-  async canActivate(ctx: ExecutionContext): Promise<boolean> {
-    const required = this.reflector.getAllAndOverride<string[]>(PERMS_KEY, [
-      ctx.getHandler(),
-      ctx.getClass(),
-    ]);
-    if (!required || required.length === 0) return true;
+  canActivate(ctx: ExecutionContext): boolean {
+    const needPerms: string[] =
+      this.reflector.getAllAndOverride(REQUIRE_PERMS_KEY, [
+        ctx.getHandler(),
+        ctx.getClass(),
+      ]) ?? [];
+
+    // nothing required -> allow
+    if (!needPerms.length) return true;
 
     const req = ctx.switchToHttp().getRequest();
-    const user = req.user as { sub: number } | undefined;
-    if (!user?.sub) throw new ForbiddenException('Forbidden');
+    const userPerms: string[] = req.user?.perms ?? [];
 
-    // Collect user permissions via roles
-    const rolePerms = await this.prisma.rolePermission.findMany({
-      where: { role: { userRoles: { some: { userId: user.sub } } } },
-      select: { permission: { select: { slug: true } } },
-    });
-
-    const userPermSlugs = new Set(rolePerms.map((rp) => rp.permission.slug));
-    const ok = required.every((p) => userPermSlugs.has(p));
-    if (!ok) throw new ForbiddenException('Forbidden');
+    const missing = needPerms.filter((p) => !userPerms.includes(p));
+    if (missing.length) {
+      throw new ForbiddenException(`Missing permissions: ${missing.join(', ')}`);
+    }
     return true;
   }
 }

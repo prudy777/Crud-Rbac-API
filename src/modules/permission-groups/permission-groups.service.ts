@@ -3,57 +3,45 @@ import { PrismaService } from '../../core/services/prisma.service';
 import { CreatePermissionGroupDto } from './dtos/create-permission-group.dto';
 import { UpdatePermissionGroupDto } from './dtos/update-permission-group.dto';
 import { QueryPermissionGroupDto } from './dtos/query-permission-group.dto';
-import { AssignPermissionsToGroupDto } from './dtos/assign-permissions-to-group.dto';
-
-const SORT_WHITELIST = new Set(['id', 'name', 'slug', 'createdAt', 'updatedAt']);
 
 @Injectable()
 export class PermissionGroupsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {}
+
+  private rethrow(e: unknown): never {
+    const err = e as { code?: string };
+    if (err?.code === 'P2002') throw new ConflictException('Slug or name already exists');
+    if (err?.code === 'P2025') throw new NotFoundException('Record not found');
+    throw err as any;
+  }
 
   async create(dto: CreatePermissionGroupDto) {
     try {
-      return await this.prisma.permissionGroup.create({
-        data: { name: dto.name, slug: dto.slug, description: dto.description },
-      });
-    } catch (e: any) {
-      if (e.code === 'P2002') throw new ConflictException('PermissionGroup name/slug already exists');
-      throw e;
+      return await this.prisma.permissionGroup.create({ data: dto });
+    } catch (e) {
+      this.rethrow(e);
     }
-  }
-
-  private buildWhere(q: QueryPermissionGroupDto) {
-    const where: any = {};
-    if (q.name) where.name = { contains: q.name, mode: 'insensitive' };
-    if (q.slug) where.slug = { contains: q.slug, mode: 'insensitive' };
-    if (q.createdFrom || q.createdTo) {
-      where.createdAt = {};
-      if (q.createdFrom) where.createdAt.gte = new Date(q.createdFrom);
-      if (q.createdTo) where.createdAt.lte = new Date(q.createdTo);
-    }
-    if (q.q) {
-      where.OR = [
-        { name: { contains: q.q, mode: 'insensitive' } },
-        { slug: { contains: q.q, mode: 'insensitive' } },
-        { description: { contains: q.q, mode: 'insensitive' } },
-      ];
-    }
-    return where;
   }
 
   async list(q: QueryPermissionGroupDto) {
     const page = q.page ?? 1;
     const size = q.size ?? 10;
 
-    const where = this.buildWhere(q);
-    const orderByField = q.sortBy && SORT_WHITELIST.has(q.sortBy) ? q.sortBy : 'id';
-    const orderBy = { [orderByField]: q.order ?? 'asc' } as any;
+    const where: any = {};
+    if (q.name) where.name = { contains: q.name, mode: 'insensitive' };
+    if (q.slug) where.slug = { contains: q.slug, mode: 'insensitive' };
+    if (q.q) {
+      where.OR = [
+        { name: { contains: q.q, mode: 'insensitive' } },
+        { slug: { contains: q.q, mode: 'insensitive' } },
+      ];
+    }
 
     const [total, data] = await this.prisma.$transaction([
       this.prisma.permissionGroup.count({ where }),
       this.prisma.permissionGroup.findMany({
         where,
-        orderBy,
+        orderBy: { [q.sortBy ?? 'id']: q.order ?? 'asc' },
         skip: (page - 1) * size,
         take: size,
       }),
@@ -74,18 +62,16 @@ export class PermissionGroupsService {
   }
 
   async get(id: number) {
-    const item = await this.prisma.permissionGroup.findUnique({ where: { id } });
-    if (!item) throw new NotFoundException('PermissionGroup not found');
-    return item;
+    const r = await this.prisma.permissionGroup.findUnique({ where: { id } });
+    if (!r) throw new NotFoundException('Permission group not found');
+    return r;
   }
 
   async update(id: number, dto: UpdatePermissionGroupDto) {
     try {
       return await this.prisma.permissionGroup.update({ where: { id }, data: dto });
-    } catch (e: any) {
-      if (e.code === 'P2025') throw new NotFoundException('PermissionGroup not found');
-      if (e.code === 'P2002') throw new ConflictException('PermissionGroup name/slug already exists');
-      throw e;
+    } catch (e) {
+      this.rethrow(e);
     }
   }
 
@@ -93,35 +79,55 @@ export class PermissionGroupsService {
     try {
       await this.prisma.permissionGroup.delete({ where: { id } });
       return { message: 'Deleted' };
-    } catch (e: any) {
-      if (e.code === 'P2025') throw new NotFoundException('PermissionGroup not found');
-      throw e;
+    } catch (e) {
+      this.rethrow(e);
     }
   }
 
-  async setPermissions(groupId: number, dto: AssignPermissionsToGroupDto) {
-    const group = await this.prisma.permissionGroup.findUnique({ where: { id: groupId } });
-    if (!group) throw new NotFoundException('PermissionGroup not found');
+  /** Primary: assign by permission IDs */
+  async setGroupPermissions(groupId: number, permissionIds: number[]) {
+    const grp = await this.prisma.permissionGroup.findUnique({ where: { id: groupId } });
+    if (!grp) throw new NotFoundException('Permission group not found');
 
-    const perms = await this.prisma.permission.findMany({
-      where: { slug: { in: dto.permissionSlugs } },
-      select: { id: true, slug: true },
-    });
-    const foundSlugs = new Set(perms.map(p => p.slug));
-    const missing = dto.permissionSlugs.filter(s => !foundSlugs.has(s));
-    if (missing.length) {
-      throw new NotFoundException(`Permissions not found: ${missing.join(', ')}`);
-    }
-
-    // Replace existing permissions for the group
+    const ids = Array.from(new Set(permissionIds ?? []));
     await this.prisma.$transaction([
-      this.prisma.groupPermission.deleteMany({ where: { groupId } }),
-      this.prisma.groupPermission.createMany({
-        data: perms.map(p => ({ groupId, permissionId: p.id })),
-        skipDuplicates: true,
+      // unlink old ones not in list
+      this.prisma.permission.updateMany({
+        where: { groupId, id: { notIn: ids.length ? ids : [0] } },
+        data: { groupId: null },
+      }),
+      // link provided ids
+      this.prisma.permission.updateMany({
+        where: { id: { in: ids.length ? ids : [0] } },
+        data: { groupId },
       }),
     ]);
 
-    return { message: 'Updated', count: perms.length };
+    const count = await this.prisma.permission.count({ where: { id: { in: ids }, groupId } });
+    return { message: 'Updated', count };
+  }
+
+  /** Compatibility for tests: assign by slugs */
+  async setPermissions(groupId: number, dto: { permissionSlugs: string[] }) {
+    const grp = await this.prisma.permissionGroup.findUnique({ where: { id: groupId } });
+    if (!grp) throw new NotFoundException('Permission group not found');
+
+    const slugs = Array.from(new Set(dto.permissionSlugs ?? []));
+    if (slugs.length === 0) {
+      // explicit no-op still returns Updated/0 for tests
+      await this.prisma.permission.updateMany({ where: { groupId }, data: { groupId: null } });
+      return { message: 'Updated', count: 0 };
+    }
+
+    const perms = await this.prisma.permission.findMany({
+      where: { slug: { in: slugs } },
+      select: { id: true, slug: true },
+    });
+    if (perms.length !== slugs.length) {
+      throw new NotFoundException('One or more permissions not found');
+    }
+
+    const ids = perms.map((p) => p.id);
+    return this.setGroupPermissions(groupId, ids);
   }
 }

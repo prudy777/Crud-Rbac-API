@@ -1,4 +1,3 @@
-// src/modules/users/users.service.ts
 import {
   ConflictException,
   Injectable,
@@ -7,12 +6,15 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from '../../core/services/prisma.service';
+  // DTOs
 import { CreateUserDto } from './dtos/create-user.dto';
 import { LoginUserDto } from './dtos/login-user.dto';
 import { UpdateUsertDto } from './dtos/update-user.dto';
+import { QueryUserDto } from './dtos/query-user.dto';
+  // JWT / crypto
 import { JwtService } from '@nestjs/jwt';
 import { compare, hash } from 'bcrypt';
-import { QueryUserDto } from './dtos/query-user.dto';
+  // types
 import { LoginResponse, UserPayload } from './interfaces/users-login.interface';
 
 // Keep the shape minimal and stable across Prisma versions (no timestamps assumed)
@@ -51,18 +53,15 @@ export class UsersService {
   // ---------- Auth ----------
   async registerUser(dto: CreateUserDto): Promise<UserSafe> {
     try {
-      // If on Prisma 5+, `omit` is supported and returns everything except password.
-      // If you're on Prisma 4, switch to `select: { id: true, email: true, name: true, password: true }` and then toSafe.
       const user = await this.prisma.user.create({
         data: {
           email: dto.email,
           password: await hash(dto.password, 10),
           name: dto.name,
         },
+        // Prisma 5+ `omit`. If on Prisma 4, use `select` + `toSafe`.
         omit: { password: true } as any,
       });
-
-      // `omit` already removed password; but keep a cast for shared toSafe usage.
       return user as unknown as UserSafe;
     } catch (e) {
       this.rethrow(e);
@@ -71,17 +70,47 @@ export class UsersService {
 
   async loginUser(dto: LoginUserDto): Promise<LoginResponse> {
     try {
-      const user = (await this.prisma.user.findUnique({
+      // Pull roles -> permissions so JWT includes RBAC claims for guards
+      const user = await this.prisma.user.findUnique({
         where: { email: dto.email },
-        select: { id: true, email: true, password: true, name: true },
-      })) as DbUser | null;
+        select: {
+          id: true,
+          email: true,
+          password: true,
+          name: true,
+          roles: {
+            select: {
+              role: {
+                select: {
+                  slug: true,
+                  rolePerms: {
+                    select: {
+                      permission: { select: { slug: true } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
 
       if (!user) throw new NotFoundException('User not found');
 
       const ok = await compare(dto.password, user.password);
       if (!ok) throw new UnauthorizedException('Invalid credentials');
 
-      const payload: UserPayload = { sub: user.id, email: user.email, name: user.name };
+      const roles = user.roles.map((r) => r.role.slug);
+      const perms = user.roles.flatMap((r) => r.role.rolePerms.map((rp) => rp.permission.slug));
+
+      const payload: UserPayload = {
+        sub: user.id,
+        email: user.email,
+        name: user.name,
+        roles,
+        perms,
+      };
+
       return { access_token: await this.jwtService.signAsync(payload) };
     } catch (e) {
       if (e instanceof NotFoundException || e instanceof UnauthorizedException) throw e;
@@ -97,7 +126,6 @@ export class UsersService {
       const data: Partial<DbUser & { password?: string }> = { ...dto } as any;
       if ((dto as any).password) data.password = await hash((dto as any).password, 10);
 
-      // Return all fields except password (Prisma 5 `omit`). If on 4.x, use `select` and `toSafe`.
       const updated = (await this.prisma.user.update({
         where: { id },
         data,

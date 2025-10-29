@@ -1,6 +1,5 @@
 generator client {
   provider = "prisma-client-js"
-  // output   = "../generated/prisma"   // optional; remove if you don't need custom path
 }
 
 datasource db {
@@ -8,15 +7,17 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// --- existing ---
+/* ---------- Core ---------- */
 model User {
-  id       Int     @id @default(autoincrement())
-  email    String  @unique
-  password String
-  name     String?
-  posts    Post[]
-  // RBAC
-  userRoles UserRole[]
+  id            Int       @id @default(autoincrement())
+  email         String    @unique
+  password      String
+  name          String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  posts         Post[]
+  roles         UserRole[]
 }
 
 model Post {
@@ -24,53 +25,51 @@ model Post {
   title     String
   content   String?
   published Boolean   @default(false)
-  author    User?     @relation(fields: [authorId], references: [id])
   authorId  Int?
-}
-
-// --- RBAC ---
-
-model Role {
-  id          Int         @id @default(autoincrement())
-  name        String      @unique
-  slug        String      @unique
-  description String?
-  // junctions
-  userRoles       UserRole[]
-  rolePermissions RolePermission[]
+  author    User?     @relation(fields: [authorId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/* ---------- RBAC ---------- */
+model Role {
+  id          Int       @id @default(autoincrement())
+  name        String    @unique
+  slug        String    @unique
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  users         UserRole[]
+  rolePerms     RolePermission[]
 }
 
 model PermissionGroup {
-  id          Int         @id @default(autoincrement())
-  name        String      @unique
-  slug        String      @unique
+  id          Int       @id @default(autoincrement())
+  name        String    @unique
+  slug        String    @unique
   description String?
-  // junctions
-  groupPermissions GroupPermission[]
-  permissions      Permission[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  permissions Permission[]
 }
 
 model Permission {
-  id          Int         @id @default(autoincrement())
-  name        String
-  slug        String      @unique
+  id          Int       @id @default(autoincrement())
+  name        String    @unique
+  slug        String    @unique
   description String?
   groupId     Int?
   group       PermissionGroup? @relation(fields: [groupId], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
-  rolePermissions RolePermission[]
-  groupPermissions GroupPermission[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  rolePerms   RolePermission[]
 }
 
+/* ---------- Join tables ---------- */
 model UserRole {
   userId Int
   roleId Int
@@ -89,14 +88,4 @@ model RolePermission {
 
   @@id([roleId, permissionId])
   @@index([permissionId, roleId])
-}
-
-model GroupPermission {
-  groupId      Int
-  permissionId Int
-  group        PermissionGroup @relation(fields: [groupId], references: [id])
-  permission   Permission      @relation(fields: [permissionId], references: [id])
-
-  @@id([groupId, permissionId])
-  @@index([permissionId, groupId])
 }
