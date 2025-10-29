@@ -124,4 +124,17 @@ export class RolesService {
 
     return { message: 'Updated', count: perms.length };
   }
+
+  async assignPermissions(roleId: number, permissionIds: number[]) {
+  const operations = permissionIds.map((permissionId) =>
+    this.prisma.rolePermission.upsert({
+      where: { roleId_permissionId: { roleId, permissionId } },
+      update: {},
+      create: { roleId, permissionId },
+    }),
+  );
+  const result = await this.prisma.$transaction(operations);
+  return result.length;
+}
+
 }

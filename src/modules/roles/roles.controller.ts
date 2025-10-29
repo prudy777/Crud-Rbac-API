@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query,Put } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { RolesService } from './roles.service';
 import { CreateRoleDto } from './dtos/create-role.dto';
@@ -75,5 +75,16 @@ export class RolesController {
   @ApiResponse({ status: 200, schema: { example: { message: 'Updated', count: 3 } } })
   setPermissions(@Param('id', ParseIntPipe) id: number, @Body() dto: AssignPermissionsDto) {
     return this.svc.setPermissions(id, dto);
+  }
+
+    @Put(':id/permissions')
+  @ApiOperation({ summary: 'Assign permissions to role' })
+  async assignPermissions(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { permissionIds: number[] },
+  ) {
+    const { permissionIds } = body;
+const count = await this.svc.assignPermissions(id, permissionIds);
+    return { message: 'Updated', count };
   }
 }
