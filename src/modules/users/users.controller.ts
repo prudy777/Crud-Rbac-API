@@ -128,6 +128,13 @@ export class UsersController {
     return this.usersService.updateUser(+id, updateUserDto);
   }
 
+  @Get(':id/roles')
+@ApiOperation({ summary: 'Get all roles assigned to a user' })
+@ApiResponse({ status: 200, schema: { example: { data: [{ id: 1, name: 'admin', slug: 'admin' }] } } })
+getUserRoles(@Param('id', ParseIntPipe) id: number) {
+  return this.usersService.getUserRoles(id);
+}
+
   @Delete(':id')
   @UseGuards(IsMineGuard)
   @ApiBearerAuth('bearerAuth')

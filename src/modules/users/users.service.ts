@@ -212,4 +212,14 @@ export class UsersService {
 
     return { message: 'Updated', count: roles.length };
   }
+
+  async getUserRoles(userId: number) {
+  const roles = await this.prisma.userRole.findMany({
+    where: { userId },
+    include: { role: true },
+  });
+
+  return { data: roles.map((r) => r.role) };
+}
+
 }
