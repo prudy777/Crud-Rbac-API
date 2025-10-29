@@ -29,7 +29,9 @@
     "db:push": "npx prisma db push",
     "db:push:test": "dotenv -e .env.test -- npx prisma db push",
     "db:reset:test": "dotenv -e .env.test -- npx prisma migrate reset -f",
-    "db:studio:test": "dotenv -e .env.test -- npx prisma studio"
+    "db:studio:test": "dotenv -e .env.test -- npx prisma studio",
+     "build": "nest build",
+    "postinstall": "prisma generate && prisma migrate deploy"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
