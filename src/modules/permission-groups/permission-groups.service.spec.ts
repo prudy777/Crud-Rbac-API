@@ -1,141 +1,72 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+// src/modules/permission-groups/permission-groups.service.spec.ts
+import { Test } from '@nestjs/testing';
+import { PermissionGroupsService } from './permission-groups.service';
 import { PrismaService } from '../../core/services/prisma.service';
-import { CreatePermissionGroupDto } from './dtos/create-permission-group.dto';
-import { UpdatePermissionGroupDto } from './dtos/update-permission-group.dto';
-import { QueryPermissionGroupDto } from './dtos/query-permission-group.dto';
+import { ConflictException, NotFoundException } from '@nestjs/common';
+import { prismaMock } from '../../../test/mocks/prisma.service';
 
-@Injectable()
-export class PermissionGroupsService {
-  constructor(private readonly prisma: PrismaService) {}
+describe('PermissionGroupsService', () => {
+  let service: PermissionGroupsService;
 
-  private rethrow(e: unknown): never {
-    const err = e as { code?: string };
-    if (err?.code === 'P2002') throw new ConflictException('Slug or name already exists');
-    if (err?.code === 'P2025') throw new NotFoundException('Record not found');
-    throw e as any;
-  }
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PermissionGroupsService,
+        { provide: PrismaService, useValue: prismaMock },
+      ],
+    }).compile();
+    service = moduleRef.get(PermissionGroupsService);
+  });
 
-  async create(dto: CreatePermissionGroupDto) {
-    try {
-      return await this.prisma.permissionGroup.create({ data: dto });
-    } catch (e) {
-      this.rethrow(e);
-    }
-  }
+  it('create: success', async () => {
+    (prismaMock.permissionGroup.create as jest.Mock).mockResolvedValue({ id: 1, name: 'Users', slug: 'users' });
+    const r = await service.create({ name: 'Users', slug: 'users' } as any);
+    expect(r.id).toBe(1);
+  });
 
-  async list(q: QueryPermissionGroupDto) {
-    const page = q.page ?? 1;
-    const size = q.size ?? 10;
+  it('create: conflict', async () => {
+    (prismaMock.permissionGroup.create as jest.Mock).mockRejectedValue({ code: 'P2002' });
+    await expect(service.create({ name: 'Users', slug: 'users' } as any)).rejects.toBeInstanceOf(ConflictException);
+  });
 
-    const where: any = {};
-    if (q.name) where.name = { contains: q.name, mode: 'insensitive' };
-    if (q.slug) where.slug = { contains: q.slug, mode: 'insensitive' };
-    if (q.q) {
-      where.OR = [
-        { name: { contains: q.q, mode: 'insensitive' } },
-        { slug: { contains: q.q, mode: 'insensitive' } },
-      ];
-    }
+  it('list', async () => {
+    (prismaMock.$transaction as jest.Mock).mockResolvedValue([0, []]);
+    const r = await service.list({ page: 1, size: 10 } as any);
+    expect(r.meta.total).toBe(0);
+  });
 
-    const [total, items] = await this.prisma.$transaction([
-      this.prisma.permissionGroup.count({ where }),
-      this.prisma.permissionGroup.findMany({
-        where,
-        orderBy: { [q.sortBy ?? 'id']: q.order ?? 'asc' },
-        skip: (page - 1) * size,
-        take: size,
-      }),
-    ]);
+  it('get: not found', async () => {
+    (prismaMock.permissionGroup.findUnique as jest.Mock).mockResolvedValue(null);
+    await expect(service.get(1)).rejects.toBeInstanceOf(NotFoundException);
+  });
 
-    const lastPage = Math.max(1, Math.ceil(total / size));
-    return {
-      data: items,
-      meta: {
-        total,
-        lastPage,
-        currentPage: page,
-        totalPerPage: size,
-        prevPage: page > 1 ? page - 1 : null,
-        nextPage: page < lastPage ? page + 1 : null,
-      },
-    };
-  }
+  it('update: not found', async () => {
+    (prismaMock.permissionGroup.update as jest.Mock).mockRejectedValue({ code: 'P2025' });
+    await expect(service.update(1, {} as any)).rejects.toBeInstanceOf(NotFoundException);
+  });
 
-  async get(id: number) {
-    const r = await this.prisma.permissionGroup.findUnique({ where: { id } });
-    if (!r) throw new NotFoundException('Permission group not found');
-    return r;
-  }
+  it('remove: not found', async () => {
+    (prismaMock.permissionGroup.delete as jest.Mock).mockRejectedValue({ code: 'P2025' });
+    await expect(service.remove(1)).rejects.toBeInstanceOf(NotFoundException);
+  });
 
-  async update(id: number, dto: UpdatePermissionGroupDto) {
-    try {
-      return await this.prisma.permissionGroup.update({ where: { id }, data: dto });
-    } catch (e) {
-      this.rethrow(e);
-    }
-  }
+  it('setPermissions: group not found', async () => {
+    (prismaMock.permissionGroup.findUnique as jest.Mock).mockResolvedValue(null);
+    await expect(service.setPermissions(1, { permissionSlugs: [] } as any)).rejects.toBeInstanceOf(NotFoundException);
+  });
 
-  async remove(id: number) {
-    try {
-      await this.prisma.permissionGroup.delete({ where: { id } });
-      return { message: 'Deleted' };
-    } catch (e) {
-      this.rethrow(e);
-    }
-  }
+  it('setPermissions: missing slugs', async () => {
+    (prismaMock.permissionGroup.findUnique as jest.Mock).mockResolvedValue({ id: 1 });
+    (prismaMock.permission.findMany as jest.Mock).mockResolvedValue([{ id: 1, slug: 'x' }]);
+    await expect(service.setPermissions(1, { permissionSlugs: ['x','y'] } as any)).rejects.toBeInstanceOf(NotFoundException);
+  });
 
-  /**
-   * Primary method: assign by IDs
-   */
-  async setGroupPermissions(groupId: number, permissionIds: number[]) {
-    // ensure group exists (use findUnique because tests mock findUnique)
-    const grp = await this.prisma.permissionGroup.findUnique({ where: { id: groupId } });
-    if (!grp) throw new NotFoundException('Permission group not found');
-
-    const ids = Array.from(new Set(permissionIds));
-    await this.prisma.$transaction([
-      // unlink any currently linked permissions that are no longer in the input
-      this.prisma.permission.updateMany({
-        where: { groupId: groupId, id: { notIn: ids.length ? ids : [0] } },
-        data: { groupId: null },
-      }),
-      // link provided ids to this group
-      this.prisma.permission.updateMany({
-        where: { id: { in: ids.length ? ids : [0] } },
-        data: { groupId: groupId },
-      }),
-    ]);
-
-    const count = await this.prisma.permission.count({
-      where: { id: { in: ids }, groupId: groupId },
-    });
-
-    return { message: 'Updated', count };
-  }
-
-  /**
-   * Compatibility method for existing tests: assign by slugs
-   * dto: { permissionSlugs: string[] }
-   */
-  async setPermissions(groupId: number, dto: { permissionSlugs: string[] }) {
-    const grp = await this.prisma.permissionGroup.findUnique({ where: { id: groupId } });
-    if (!grp) throw new NotFoundException('Permission group not found');
-
-    const slugs = Array.from(new Set(dto.permissionSlugs ?? []));
-    if (!slugs.length) {
-      return { message: 'Updated', count: 0 };
-    }
-
-    const perms = await this.prisma.permission.findMany({
-      where: { slug: { in: slugs } },
-      select: { id: true, slug: true },
-    });
-
-    if (perms.length !== slugs.length) {
-      throw new NotFoundException('One or more permissions not found');
-    }
-
-    const ids = perms.map((p) => p.id);
-    return this.setGroupPermissions(groupId, ids);
-  }
-}
+  it('setPermissions: success', async () => {
+    (prismaMock.permissionGroup.findUnique as jest.Mock).mockResolvedValue({ id: 1 });
+    (prismaMock.permission.findMany as jest.Mock).mockResolvedValue([{ id: 1, slug: 'x' }]);
+    (prismaMock.$transaction as jest.Mock).mockResolvedValue([{}, {}]);
+    const r = await service.setPermissions(1, { permissionSlugs: ['x'] } as any);
+    expect(r).toEqual({ message: 'Updated', count: 1 });
+  });
+});
