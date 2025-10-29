@@ -1,0 +1,102 @@
+generator client {
+  provider = "prisma-client-js"
+  // output   = "../generated/prisma"   // optional; remove if you don't need custom path
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- existing ---
+model User {
+  id       Int     @id @default(autoincrement())
+  email    String  @unique
+  password String
+  name     String?
+  posts    Post[]
+  // RBAC
+  userRoles UserRole[]
+}
+
+model Post {
+  id        Int      @id @default(autoincrement())
+  title     String
+  content   String?
+  published Boolean   @default(false)
+  author    User?     @relation(fields: [authorId], references: [id])
+  authorId  Int?
+}
+
+// --- RBAC ---
+
+model Role {
+  id          Int         @id @default(autoincrement())
+  name        String      @unique
+  slug        String      @unique
+  description String?
+  // junctions
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PermissionGroup {
+  id          Int         @id @default(autoincrement())
+  name        String      @unique
+  slug        String      @unique
+  description String?
+  // junctions
+  groupPermissions GroupPermission[]
+  permissions      Permission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Permission {
+  id          Int         @id @default(autoincrement())
+  name        String
+  slug        String      @unique
+  description String?
+  groupId     Int?
+  group       PermissionGroup? @relation(fields: [groupId], references: [id])
+
+  rolePermissions RolePermission[]
+  groupPermissions GroupPermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model UserRole {
+  userId Int
+  roleId Int
+  user   User @relation(fields: [userId], references: [id])
+  role   Role @relation(fields: [roleId], references: [id])
+
+  @@id([userId, roleId])
+  @@index([roleId, userId])
+}
+
+model RolePermission {
+  roleId       Int
+  permissionId Int
+  role         Role       @relation(fields: [roleId], references: [id])
+  permission   Permission @relation(fields: [permissionId], references: [id])
+
+  @@id([roleId, permissionId])
+  @@index([permissionId, roleId])
+}
+
+model GroupPermission {
+  groupId      Int
+  permissionId Int
+  group        PermissionGroup @relation(fields: [groupId], references: [id])
+  permission   Permission      @relation(fields: [permissionId], references: [id])
+
+  @@id([groupId, permissionId])
+  @@index([permissionId, groupId])
+}
